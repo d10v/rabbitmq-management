@@ -1,17 +1,8 @@
-%% The contents of this file are subject to the Mozilla Public License
-%% Version 1.1 (the "License"); you may not use this file except in
-%% compliance with the License. You may obtain a copy of the License at
-%% https://www.mozilla.org/MPL/
+%% This Source Code Form is subject to the terms of the Mozilla Public
+%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%% file, You can obtain one at https://mozilla.org/MPL/2.0/.
 %%
-%% Software distributed under the License is distributed on an "AS IS"
-%% basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See the
-%% License for the specific language governing rights and limitations
-%% under the License.
-%%
-%% The Original Code is RabbitMQ.
-%%
-%% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2016-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2016-2020 VMware, Inc. or its affiliates.  All rights reserved.
 %%
 
 -module(rabbit_mgmt_test_db_SUITE).
@@ -66,13 +57,11 @@ init_per_group(_, Config) ->
         rabbit_mgmt_test_util:merge_stats_app_env(Config1, 1000, 1),
             {rabbitmq_management_agent, [{rates_mode, detailed}]}),
     rabbit_ct_helpers:run_setup_steps(Config2,
-                      rabbit_ct_broker_helpers:setup_steps() ++
-                      rabbit_ct_client_helpers:setup_steps() ++
-                      [fun rabbit_mgmt_test_util:reset_management_settings/1]).
+                                      rabbit_ct_broker_helpers:setup_steps() ++
+                                          rabbit_ct_client_helpers:setup_steps()).
 
 end_per_group(_, Config) ->
     rabbit_ct_helpers:run_teardown_steps(Config,
-                                         [fun rabbit_mgmt_test_util:reset_management_settings/1] ++
                                          rabbit_ct_client_helpers:teardown_steps() ++
                                              rabbit_ct_broker_helpers:teardown_steps()).
 

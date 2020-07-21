@@ -1,17 +1,8 @@
-%% The contents of this file are subject to the Mozilla Public License
-%% Version 1.1 (the "License"); you may not use this file except in
-%% compliance with the License. You may obtain a copy of the License at
-%% https://www.mozilla.org/MPL/
+%% This Source Code Form is subject to the terms of the Mozilla Public
+%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%% file, You can obtain one at https://mozilla.org/MPL/2.0/.
 %%
-%% Software distributed under the License is distributed on an "AS IS"
-%% basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See the
-%% License for the specific language governing rights and limitations
-%% under the License.
-%%
-%% The Original Code is RabbitMQ.
-%%
-%% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2016 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2016-2020 VMware, Inc. or its affiliates.  All rights reserved.
 %%
 
 -module(rabbit_mgmt_rabbitmqadmin_SUITE).
@@ -29,7 +20,7 @@ groups() ->
              help,
              host,
              base_uri,
-             config,
+             config_file,
              user,
              fmt_long,
              fmt_kvp,
@@ -74,6 +65,7 @@ init_per_suite(Config) ->
                                       ]).
 
 end_per_suite(Config) ->
+    ?assertNotEqual(os:getenv("HOME"), ?config(priv_dir, Config)),
     rabbit_ct_helpers:run_teardown_steps(Config,
                                          rabbit_ct_client_helpers:teardown_steps() ++
                                              rabbit_ct_broker_helpers:teardown_steps()).
@@ -88,12 +80,14 @@ init_per_group(_, Config) ->
 end_per_group(_, Config) ->
     Config.
 
-init_per_testcase(config, Config) ->
-    rabbit_ct_helpers:set_config(Config, {env_home, os:getenv("HOME")});
+init_per_testcase(config_file, Config) ->
+    Home = os:getenv("HOME"),
+    os:putenv("HOME", ?config(priv_dir, Config)),
+    rabbit_ct_helpers:set_config(Config, {env_home, Home});
 init_per_testcase(Testcase, Config) ->
     rabbit_ct_helpers:testcase_started(Config, Testcase).
 
-end_per_testcase(config, Config) ->
+end_per_testcase(config_file, Config) ->
     Home = rabbit_ct_helpers:get_config(Config, env_home),
     os:putenv("HOME", Home);
 end_per_testcase(Testcase, Config) ->
@@ -127,24 +121,38 @@ base_uri(Config) ->
                                  "list", "exchanges"]).
 
 
-config(Config) ->
-    PrivDir = ?config(priv_dir, Config),
-    os:putenv("HOME", PrivDir),
+config_file(Config) ->
+    MgmtPort = integer_to_list(http_api_port(Config)),
     {_DefConf, TestConf} = write_test_config(Config),
-    {error, _, _} = run(Config, ["--config", "/tmp/no-such-config-file",
-                                 "show", "overview"]),
-    {ok, _} = run(Config, ["--config", TestConf, "--node",
-                           "host_normal", "show", "overview"]),
 
-    % test 'default node in the config file' where "default" uses an invalid host
-    {error, _, _} = run(Config, ["--config", TestConf, "show", "overview"]),
-    {ok, _} = run(Config, ["show", "overview"]),
-    {error, _, _} = run(Config, ["--node", "non_default", "show", "overview"]).
+    %% try using a non-existent config file
+    ?assertMatch({error, _, _}, run(Config, ["--config", "/tmp/no-such-config-file", "show", "overview"])),
+    %% use a config file section with a reachable endpoint and correct credentials
+    ?assertMatch({ok, _}, run(Config, ["--config", TestConf, "--node", "reachable", "show", "overview"])),
+
+    %% Default node in the config file uses an unreachable endpoint. Note that
+    %% the function that drives rabbitmqadmin will specify a --port and that will override
+    %% the config file value.
+    ?assertMatch({error, _, _}, run(Config, ["--config", TestConf, "show", "overview"])),
+
+    %% overrides hostname and port using --base-uri
+    BaseURI = rabbit_misc:format("http://localhost:~s", [MgmtPort]),
+    ?assertMatch({ok, _}, run(Config, ["--config", TestConf, "--base-uri", BaseURI, "show", "overview"])),
+
+    %% overrides --host and --port on the command line
+    ?assertMatch({ok, _}, run(Config, ["--config", TestConf, "--node", "default", "--host", "localhost", "--port", MgmtPort, "show", "overview"])),
+
+    ?assertMatch({ok, _}, run(Config, ["show", "overview"])),
+    ?assertMatch({error, _, _}, run(Config, ["--node", "bad_credentials", "show", "overview"])),
+    %% overrides --username and --password on the command line with correct credentials
+    ?assertMatch({ok, _}, run(Config, ["--node", "bad_credentials", "--username", "guest", "--password", "guest", "show", "overview"])),
+    %% overrides --username and --password on the command line with incorrect credentials
+    ?assertMatch({error, _, _}, run(Config, ["--node", "bad_credentials", "--username", "gu3st", "--password", "guesTTTT", "show", "overview"])).
 
 user(Config) ->
-    {ok, _} = run(Config, ["--user", "guest", "--password", "guest", "show", "overview"]),
-    {error, _, _} = run(Config, ["--user", "no", "--password", "guest", "show", "overview"]),
-    {error, _, _} = run(Config, ["--user", "guest", "--password", "no", "show", "overview"]).
+    ?assertMatch({ok, _}, run(Config, ["--user", "guest", "--password", "guest", "show", "overview"])),
+    ?assertMatch({error, _, _}, run(Config, ["--user", "no", "--password", "guest", "show", "overview"])),
+    ?assertMatch({error, _, _}, run(Config, ["--user", "guest", "--password", "no", "show", "overview"])).
 
 fmt_long(Config) ->
     Out = multi_line_string([
@@ -460,25 +468,25 @@ publish_with_stdin_python_program(Config, In) ->
     "exit(proc.returncode)".
 
 write_test_config(Config) ->
-    MgmtPort = integer_to_list(rabbit_ct_broker_helpers:get_node_config(Config, 0, tcp_port_mgmt)),
+    MgmtPort = integer_to_list(http_api_port(Config)),
     PrivDir = ?config(priv_dir, Config),
     DefaultConfig = [
-        "[non_default]",
+        "[bad_credentials]",
         "hostname = localhost",
-        "port = 99999",
-        "username = guest",
-        "password = guest",
+        "port =" ++ MgmtPort,
+        "username = gu/est",
+        "password = gu\\est",
         "declare_vhost = /",
         "vhost = /",
         "",
         "[bad_host]",
-        "hostname = rabbit.acme.com",
+        "hostname = non-existent.acme.com",
         "port = " ++ MgmtPort,
         "username = guest",
         "password = guest"
                     ],
     TestConfig = [
-        "[host_normal]",
+        "[reachable]",
         "hostname = localhost",
         "port = " ++ MgmtPort,
         "username = guest",
@@ -487,8 +495,8 @@ write_test_config(Config) ->
         "vhost = /",
         "",
         "[default]",
-        "hostname = localhost",
-        "port = 99999",
+        "hostname = non-existent.acme.com",
+        "port = 99799",
         "username = guest",
         "password = guest"
            ],
@@ -499,3 +507,6 @@ write_test_config(Config) ->
     file:write_file(FnDefault, DefaultConfig1),
     file:write_file(FnTest, TestConfig1),
     {FnDefault, FnTest}.
+
+http_api_port(Config) ->
+    rabbit_ct_broker_helpers:get_node_config(Config, 0, tcp_port_mgmt).
