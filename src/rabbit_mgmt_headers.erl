@@ -10,7 +10,7 @@
 -module(rabbit_mgmt_headers).
 
 -export([set_common_permission_headers/2]).
--export([set_cors_headers/2, set_hsts_headers/2, set_csp_headers/2, set_content_type_opts_headers]).
+-export([set_cors_headers/2, set_hsts_headers/2, set_csp_headers/2, set_content_type_opts_headers/2]).
 
 %%
 %% API
